@@ -10,3 +10,8 @@ eselect repository add nvidia-vulkan git https://github.com/kakra/nvidia-vulkan.
 ```
 
 Then unmask/mask as appropriate.
+
+My drivers are checked with the Vulkan GPUinfo diagnostic software. You can see my
+submitted entries here:
+
+https://vulkan.gpuinfo.org/listreports.php?submitter=hurikhan77
