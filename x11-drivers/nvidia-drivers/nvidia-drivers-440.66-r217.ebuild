@@ -1,43 +1,40 @@
-# Copyright 1999-2019 Gentoo Authors
+# Copyright 1999-2020 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
 
-EAPI=6
-inherit eutils flag-o-matic linux-info linux-mod multilib-minimal nvidia-driver \
-	portability toolchain-funcs unpacker user udev
+EAPI=7
+inherit desktop flag-o-matic linux-info linux-mod multilib-minimal \
+	nvidia-driver portability toolchain-funcs unpacker udev
 
 DESCRIPTION="NVIDIA Accelerated Graphics Driver"
-HOMEPAGE="http://www.nvidia.com/ https://developer.nvidia.com/vulkan-driver"
+HOMEPAGE="https://www.nvidia.com/ https://developer.nvidia.com/vulkan-driver"
 
-NV_PV="${PV}.${PR/r1/}"
-NVSET_PV="418.30"
+NV_PV="${PV}.${PR/r?/}"
+NVSET_PV="440.64"
 
-AMD64_FBSD_NV_PACKAGE="NVIDIA-FreeBSD-x86_64-${PV}"
 AMD64_NV_PACKAGE="NVIDIA-Linux-x86_64-${NV_PV}"
-ARM_NV_PACKAGE="NVIDIA-Linux-armv7l-gnueabihf-${PV}"
 
 NV_URI="https://developer.nvidia.com"
 SRC_URI="
-	amd64? ( ${NV_URI}/vulkan-beta-${NV_PV//./}-linux -> ${AMD64_NV_PACKAGE}.run )
+	${NV_URI}/vulkan-beta-${NV_PV//./}-linux -> ${AMD64_NV_PACKAGE}.run
 	tools? (
 		https://download.nvidia.com/XFree86/nvidia-settings/nvidia-settings-${NVSET_PV}.tar.bz2
 	)
 "
 
+EMULTILIB_PKG="true"
+KEYWORDS="-* ~amd64"
 LICENSE="GPL-2 NVIDIA-r2"
 SLOT="0/${PV%.*}"
-KEYWORDS="-* ~amd64"
-RESTRICT="bindist mirror"
-EMULTILIB_PKG="true"
 
-IUSE="acpi compat +driver gtk3 kernel_FreeBSD kernel_linux +kms multilib static-libs +tools uvm wayland +X"
+IUSE="compat +driver gtk3 +kms +libglvnd multilib static-libs +tools uvm wayland +X"
 REQUIRED_USE="
 	tools? ( X )
 	static-libs? ( tools )
 "
 
 COMMON="
-	app-eselect/eselect-opencl
-	kernel_linux? ( >=sys-libs/glibc-2.6.1 )
+	driver? ( acct-group/video )
+	>=sys-libs/glibc-2.6.1
 	tools? (
 		dev-libs/atk
 		dev-libs/glib:2
@@ -56,19 +53,23 @@ COMMON="
 		x11-libs/pango[X]
 	)
 	X? (
-		>=app-eselect/eselect-opengl-1.0.9
+		!libglvnd? ( >=app-eselect/eselect-opengl-1.0.9 )
+		libglvnd? (
+			media-libs/libglvnd[${MULTILIB_USEDEP}]
+			!app-eselect/eselect-opengl
+		)
 		app-misc/pax-utils
 	)
 "
 DEPEND="
 	${COMMON}
-	kernel_linux? ( virtual/linux-sources )
+	virtual/linux-sources
 	tools? ( sys-apps/dbus )
 "
 RDEPEND="
 	${COMMON}
-	acpi? ( sys-power/acpid )
 	tools? ( !media-video/nvidia-settings )
+	uvm? ( >=virtual/opencl-3 )
 	wayland? ( dev-libs/wayland[${MULTILIB_USEDEP}] )
 	X? (
 		<x11-base/xorg-server-1.20.99:=
@@ -80,53 +81,24 @@ RDEPEND="
 "
 QA_PREBUILT="opt/* usr/lib*"
 S=${WORKDIR}/
-
-nvidia_drivers_versions_check() {
-	if use amd64 && has_multilib_profile && \
-		[ "${DEFAULT_ABI}" != "amd64" ]; then
-		eerror "This ebuild doesn't currently support changing your default ABI"
-		die "Unexpected \${DEFAULT_ABI} = ${DEFAULT_ABI}"
-	fi
-
-	if use kernel_linux && kernel_is ge 4 21; then
-		ewarn "Gentoo supports kernels which are supported by NVIDIA"
-		ewarn "which are limited to the following kernels:"
-		ewarn "<sys-kernel/gentoo-sources-4.21"
-		ewarn "<sys-kernel/vanilla-sources-4.21"
-		ewarn ""
-		ewarn "You are free to utilize epatch_user to provide whatever"
-		ewarn "support you feel is appropriate, but will not receive"
-		ewarn "support as a result of those changes."
-		ewarn ""
-		ewarn "Do not file a bug report about this."
-		ewarn ""
-	fi
-
-	# Since Nvidia ships many different series of drivers, we need to give the user
-	# some kind of guidance as to what version they should install. This tries
-	# to point the user in the right direction but can't be perfect. check
-	# nvidia-driver.eclass
-	nvidia-driver-check-warning
-
-	# Kernel features/options to check for
-	CONFIG_CHECK="!DEBUG_MUTEXES !I2C_NVIDIA_GPU ~!LOCKDEP ~MTRR ~SYSVIPC ~ZONE_DMA"
-
-	# Now do the above checks
-	use kernel_linux && check_extra_config
-}
+PATCHES=(
+	"${FILESDIR}"/${PN}-440.26-locale.patch
+)
+NV_KV_MAX_PLUS="5.7"
+CONFIG_CHECK="!DEBUG_MUTEXES ~!I2C_NVIDIA_GPU ~!LOCKDEP ~MTRR ~SYSVIPC ~ZONE_DMA"
 
 pkg_pretend() {
-	nvidia_drivers_versions_check
+	nvidia-driver_check
 }
 
 pkg_setup() {
-	nvidia_drivers_versions_check
+	nvidia-driver_check
 
 	# try to turn off distcc and ccache for people that have a problem with it
 	export DISTCC_DISABLE=1
 	export CCACHE_DISABLE=1
 
-	if use driver && use kernel_linux; then
+	if use driver; then
 		MODULE_NAMES="nvidia(video:${S}/kernel)"
 		use uvm && MODULE_NAMES+=" nvidia-uvm(video:${S}/kernel)"
 		use kms && MODULE_NAMES+=" nvidia-modeset(video:${S}/kernel) nvidia-drm(video:${S}/kernel)"
@@ -146,29 +118,23 @@ pkg_setup() {
 		BUILD_FIXES="ARCH=$(uname -m | sed -e 's/i.86/i386/')"
 	fi
 
-	if use kernel_linux && kernel_is lt 2 6 9; then
+	if kernel_is lt 2 6 9; then
 		eerror "You must build this against 2.6.9 or higher kernels."
 	fi
 
 	# set variables to where files are in the package structure
-	if use kernel_FreeBSD; then
-		use amd64-fbsd && S="${WORKDIR}/${AMD64_FBSD_NV_PACKAGE}"
-		NV_DOC="${S}/doc"
-		NV_OBJ="${S}/obj"
-		NV_SRC="${S}/src"
-		NV_MAN="${S}/x11/man"
-		NV_X11="${S}/obj"
-		NV_SOVER=1
-	elif use kernel_linux; then
-		NV_DOC="${S}"
-		NV_OBJ="${S}"
-		NV_SRC="${S}/kernel"
-		NV_MAN="${S}"
-		NV_X11="${S}"
-		NV_SOVER="${NV_PV}"
-	else
-		die "Could not determine proper NVIDIA package"
-	fi
+	NV_DOC="${S}"
+	NV_OBJ="${S}"
+	NV_SRC="${S}/kernel"
+	NV_MAN="${S}"
+	NV_X11="${S}"
+	NV_SOVER="${NV_PV}"
+}
+
+src_configure() {
+	tc-export AR CC LD
+
+	default
 }
 
 src_prepare() {
@@ -178,10 +144,14 @@ src_prepare() {
 	done
 
 	if use tools; then
+		cp "${FILESDIR}"/nvidia-settings-fno-common.patch "${WORKDIR}" || die
 		cp "${FILESDIR}"/nvidia-settings-linker.patch "${WORKDIR}" || die
 		sed -i \
 			-e "s:@PV@:${NVSET_PV}:g" \
-			"${WORKDIR}"/nvidia-settings-linker.patch || die
+			"${WORKDIR}"/nvidia-settings-fno-common.patch \
+			"${WORKDIR}"/nvidia-settings-linker.patch \
+			|| die
+		eapply "${WORKDIR}"/nvidia-settings-fno-common.patch
 		eapply "${WORKDIR}"/nvidia-settings-linker.patch
 	fi
 
@@ -194,42 +164,31 @@ src_prepare() {
 }
 
 src_compile() {
-	# This is already the default on Linux, as there's no toplevel Makefile, but
-	# on FreeBSD there's one and triggers the kernel module build, as we install
-	# it by itself, pass this.
-
 	cd "${NV_SRC}"
-	if use kernel_FreeBSD; then
-		MAKE="$(get_bmake)" CFLAGS="-Wno-sign-compare" emake CC="$(tc-getCC)" \
-			LD="$(tc-getLD)" LDFLAGS="$(raw-ldflags)" || die
-	elif use driver && use kernel_linux; then
+	if use driver; then
 		BUILD_TARGETS=module linux-mod_src_compile \
 			KERNELRELEASE="${KV_FULL}" \
 			src="${KERNEL_DIR}"
 	fi
 
 	if use tools; then
-		emake -C "${S}"/nvidia-settings-${NVSET_PV}/src \
-			AR="$(tc-getAR)" \
-			CC="$(tc-getCC)" \
+		emake -C "${S}"/nvidia-settings-${NVSET_PV}/src/libXNVCtrl \
 			DO_STRIP= \
-			LD="$(tc-getCC)" \
 			LIBDIR="$(get_libdir)" \
 			NVLD="$(tc-getLD)" \
 			NV_VERBOSE=1 \
-			RANLIB="$(tc-getRANLIB)" \
-			build-xnvctrl
+			OUTPUTDIR=. \
+			RANLIB="$(tc-getRANLIB)"
 
 		emake -C "${S}"/nvidia-settings-${NVSET_PV}/src \
-			CC="$(tc-getCC)" \
 			DO_STRIP= \
 			GTK3_AVAILABLE=$(usex gtk3 1 0) \
-			LD="$(tc-getCC)" \
 			LIBDIR="$(get_libdir)" \
 			NVLD="$(tc-getLD)" \
 			NVML_ENABLED=0 \
 			NV_USE_BUNDLED_LIBJANSSON=0 \
-			NV_VERBOSE=1
+			NV_VERBOSE=1 \
+			OUTPUTDIR=.
 	fi
 }
 
@@ -264,16 +223,14 @@ donvidia() {
 	# If the library has a SONAME and SONAME does not match the library name,
 	# then we need to create a symlink
 	if [[ ${nv_SOVER} ]] && ! [[ "${nv_SOVER}" = "${nv_LIBNAME}" ]]; then
-		dosym ${nv_LIBNAME} ${nv_DEST}/${nv_SOVER} \
-			|| die "failed to create ${nv_DEST}/${nv_SOVER} symlink"
+		dosym ${nv_LIBNAME} ${nv_DEST}/${nv_SOVER}
 	fi
 
-	dosym ${nv_LIBNAME} ${nv_DEST}/${nv_LIBNAME/.so*/.so} \
-		|| die "failed to create ${nv_LIBNAME/.so*/.so} symlink"
+	dosym ${nv_LIBNAME} ${nv_DEST}/${nv_LIBNAME/.so*/.so}
 }
 
 src_install() {
-	if use driver && use kernel_linux; then
+	if use driver; then
 		linux-mod_src_install
 
 		# Add the aliases
@@ -281,20 +238,19 @@ src_install() {
 		# pkg_preinst, see bug #491414
 		insinto /etc/modprobe.d
 		newins "${FILESDIR}"/nvidia-169.07 nvidia.conf
-		doins "${FILESDIR}"/nvidia-rmmod.conf
+		if use uvm; then
+			doins "${FILESDIR}"/nvidia-rmmod.conf
+			udev_newrules "${FILESDIR}"/nvidia-uvm.udev-rule 99-nvidia-uvm.rules
+		else
+			sed -e 's|nvidia-uvm ||g' "${FILESDIR}"/nvidia-rmmod.conf \
+				> "${T}"/nvidia-rmmod.conf || die
+			doins "${T}"/nvidia-rmmod.conf
+		fi
 
 		# Ensures that our device nodes are created when not using X
 		exeinto "$(get_udevdir)"
 		newexe "${FILESDIR}"/nvidia-udev.sh-r1 nvidia-udev.sh
 		udev_newrules "${FILESDIR}"/nvidia.udev-rule 99-nvidia.rules
-	elif use kernel_FreeBSD; then
-		if use x86-fbsd; then
-			insinto /boot/modules
-			doins "${S}/src/nvidia.kld"
-		fi
-
-		exeinto /boot/modules
-		doexe "${S}/src/nvidia.ko"
 	fi
 
 	# NVIDIA kernel <-> userspace driver config lib
@@ -304,10 +260,8 @@ src_install() {
 	donvidia ${NV_OBJ}/libnvidia-fbc.so.${NV_SOVER}
 
 	# NVIDIA video encode/decode <-> CUDA
-	if use kernel_linux; then
-		donvidia ${NV_OBJ}/libnvcuvid.so.${NV_SOVER}
-		donvidia ${NV_OBJ}/libnvidia-encode.so.${NV_SOVER}
-	fi
+	donvidia ${NV_OBJ}/libnvcuvid.so.${NV_SOVER}
+	donvidia ${NV_OBJ}/libnvidia-encode.so.${NV_SOVER}
 
 	if use X; then
 		# Xorg DDX driver
@@ -334,28 +288,8 @@ src_install() {
 	fi
 
 	# OpenCL ICD for NVIDIA
-	if use kernel_linux; then
-		insinto /etc/OpenCL/vendors
-		doins ${NV_OBJ}/nvidia.icd
-	fi
-
-	# Documentation
-	if use kernel_FreeBSD; then
-		dodoc "${NV_DOC}/README"
-		use X && doman "${NV_MAN}"/nvidia-xconfig.1
-		use tools && doman "${NV_MAN}"/nvidia-settings.1
-	else
-		# Docs
-		newdoc "${NV_DOC}/README.txt" README
-		dodoc "${NV_DOC}/NVIDIA_Changelog"
-		doman "${NV_MAN}"/nvidia-smi.1
-		use X && doman "${NV_MAN}"/nvidia-xconfig.1
-		use tools && doman "${NV_MAN}"/nvidia-settings.1
-		doman "${NV_MAN}"/nvidia-cuda-mps-control.1
-	fi
-
-	docinto html
-	dodoc -r ${NV_DOC}/html/*
+	insinto /etc/OpenCL/vendors
+	doins ${NV_OBJ}/nvidia.icd
 
 	# Helper Apps
 	exeinto /opt/bin/
@@ -365,38 +299,40 @@ src_install() {
 
 		insinto /etc/vulkan/icd.d
 		doins nvidia_icd.json
+
+		insinto /etc/vulkan/implicit_layer.d
+		doins nvidia_layers.json
 	fi
 
-	if use kernel_linux; then
-		doexe ${NV_OBJ}/nvidia-cuda-mps-control
-		doexe ${NV_OBJ}/nvidia-cuda-mps-server
-		doexe ${NV_OBJ}/nvidia-debugdump
-		doexe ${NV_OBJ}/nvidia-persistenced
-		doexe ${NV_OBJ}/nvidia-smi
+	doexe ${NV_OBJ}/nvidia-cuda-mps-control
+	doexe ${NV_OBJ}/nvidia-cuda-mps-server
+	doexe ${NV_OBJ}/nvidia-debugdump
+	doexe ${NV_OBJ}/nvidia-persistenced
+	doexe ${NV_OBJ}/nvidia-smi
 
-		# install nvidia-modprobe setuid and symlink in /usr/bin (bug #505092)
-		doexe ${NV_OBJ}/nvidia-modprobe
-		fowners root:video /opt/bin/nvidia-modprobe
-		fperms 4710 /opt/bin/nvidia-modprobe
-		dosym /{opt,usr}/bin/nvidia-modprobe
+	# install nvidia-modprobe setuid and symlink in /usr/bin (bug #505092)
+	doexe ${NV_OBJ}/nvidia-modprobe
+	fowners root:video /opt/bin/nvidia-modprobe
+	fperms 4710 /opt/bin/nvidia-modprobe
+	dosym /{opt,usr}/bin/nvidia-modprobe
 
-		doman nvidia-cuda-mps-control.1
-		doman nvidia-modprobe.1
-		doman nvidia-persistenced.1
-		newinitd "${FILESDIR}/nvidia-smi.init" nvidia-smi
-		newconfd "${FILESDIR}/nvidia-persistenced.conf" nvidia-persistenced
-		newinitd "${FILESDIR}/nvidia-persistenced.init" nvidia-persistenced
-	fi
+	doman nvidia-cuda-mps-control.1
+	doman nvidia-modprobe.1
+	doman nvidia-persistenced.1
+	newinitd "${FILESDIR}/nvidia-smi.init" nvidia-smi
+	newconfd "${FILESDIR}/nvidia-persistenced.conf" nvidia-persistenced
+	newinitd "${FILESDIR}/nvidia-persistenced.init" nvidia-persistenced
 
 	if use tools; then
 		emake -C "${S}"/nvidia-settings-${NVSET_PV}/src/ \
 			DESTDIR="${D}" \
+			DO_STRIP= \
 			GTK3_AVAILABLE=$(usex gtk3 1 0) \
 			LIBDIR="${D}/usr/$(get_libdir)" \
 			NV_USE_BUNDLED_LIBJANSSON=0 \
 			NV_VERBOSE=1 \
+			OUTPUTDIR=. \
 			PREFIX=/usr \
-			DO_STRIP= \
 			install
 
 		if use static-libs; then
@@ -414,9 +350,7 @@ src_install() {
 		newins \
 			nvidia-application-profiles-${NV_PV}-rc nvidia-application-profiles-rc
 
-		# There is no icon in the FreeBSD tarball.
-		use kernel_FreeBSD || \
-			doicon ${NV_OBJ}/nvidia-settings.png
+		doicon ${NV_OBJ}/nvidia-settings.png
 
 		domenu "${FILESDIR}"/nvidia-settings.desktop
 
@@ -439,33 +373,41 @@ src_install() {
 
 	is_final_abi || die "failed to iterate through all ABIs"
 
+	# Documentation
+	newdoc "${NV_DOC}/README.txt" README
+	dodoc "${NV_DOC}/NVIDIA_Changelog"
+	doman "${NV_MAN}"/nvidia-smi.1
+	use X && doman "${NV_MAN}"/nvidia-xconfig.1
+	use tools && doman "${NV_MAN}"/nvidia-settings.1
+	doman "${NV_MAN}"/nvidia-cuda-mps-control.1
+
 	readme.gentoo_create_doc
+
+	docinto html
+	dodoc -r ${NV_DOC}/html/*
 }
 
 src_install-libs() {
 	local inslibdir=$(get_libdir)
-	local GL_ROOT="/usr/$(get_libdir)/opengl/nvidia/lib"
+	if use libglvnd; then
+		local GL_ROOT="/usr/$(get_libdir)"
+	else
+		local GL_ROOT="/usr/$(get_libdir)/opengl/nvidia/lib"
+	fi
 	local CL_ROOT="/usr/$(get_libdir)/OpenCL/vendors/nvidia"
 	local nv_libdir="${NV_OBJ}"
 
-	if use kernel_linux && has_multilib_profile && [[ ${ABI} == "x86" ]]; then
+	if has_multilib_profile && [[ ${ABI} == "x86" ]]; then
 		nv_libdir="${NV_OBJ}"/32
 	fi
 
 	if use X; then
 		NV_GLX_LIBRARIES=(
-			"libEGL.so.$(usex compat ${NV_SOVER} 1.1.0) ${GL_ROOT}"
 			"libEGL_nvidia.so.${NV_SOVER} ${GL_ROOT}"
-			"libGL.so.$(usex compat ${NV_SOVER} 1.7.0) ${GL_ROOT}"
-			"libGLESv1_CM.so.1.2.0 ${GL_ROOT}"
 			"libGLESv1_CM_nvidia.so.${NV_SOVER} ${GL_ROOT}"
-			"libGLESv2.so.2.1.0 ${GL_ROOT}"
 			"libGLESv2_nvidia.so.${NV_SOVER} ${GL_ROOT}"
-			"libGLX.so.0 ${GL_ROOT}"
 			"libGLX_nvidia.so.${NV_SOVER} ${GL_ROOT}"
-			"libGLdispatch.so.0 ${GL_ROOT}"
 			"libOpenCL.so.1.0.0 ${CL_ROOT}"
-			"libOpenGL.so.0 ${GL_ROOT}"
 			"libcuda.so.${NV_SOVER}"
 			"libnvcuvid.so.${NV_SOVER}"
 			"libnvidia-compiler.so.${NV_SOVER}"
@@ -481,28 +423,31 @@ src_install-libs() {
 			"libnvidia-ptxjitcompiler.so.${NV_SOVER}"
 			"libvdpau_nvidia.so.${NV_SOVER}"
 		)
+		if ! use libglvnd; then
+			NV_GLX_LIBRARIES+=(
+				"libEGL.so.$( [[ ${ABI} == "amd64" ]] && usex compat ${NV_SOVER} 1.1.0 || echo 1.1.0) ${GL_ROOT}"
+				"libGL.so.1.7.0 ${GL_ROOT}"
+				"libGLESv1_CM.so.1.2.0 ${GL_ROOT}"
+				"libGLESv2.so.2.1.0 ${GL_ROOT}"
+				"libGLX.so.0 ${GL_ROOT}"
+				"libGLdispatch.so.0 ${GL_ROOT}"
+				"libOpenGL.so.0 ${GL_ROOT}"
+			)
+		fi
 
 		if use wayland && has_multilib_profile && [[ ${ABI} == "amd64" ]];
 		then
 			NV_GLX_LIBRARIES+=(
-				"libnvidia-egl-wayland.so.1.1.2"
+				"libnvidia-egl-wayland.so.1.1.4"
 			)
 		fi
 
-		if use kernel_FreeBSD; then
-			NV_GLX_LIBRARIES+=(
-				"libnvidia-tls.so.${NV_SOVER}"
-			)
-		fi
+		NV_GLX_LIBRARIES+=(
+			"libnvidia-ml.so.${NV_SOVER}"
+			"libnvidia-tls.so.${NV_SOVER}"
+		)
 
-		if use kernel_linux; then
-			NV_GLX_LIBRARIES+=(
-				"libnvidia-ml.so.${NV_SOVER}"
-				"libnvidia-tls.so.${NV_SOVER}"
-			)
-		fi
-
-		if use kernel_linux && has_multilib_profile && [[ ${ABI} == "amd64" ]];
+		if has_multilib_profile && [[ ${ABI} == "amd64" ]];
 		then
 			NV_GLX_LIBRARIES+=(
 				"libnvidia-cbl.so.${NV_SOVER}"
@@ -518,10 +463,10 @@ src_install-libs() {
 }
 
 pkg_preinst() {
-	if use driver && use kernel_linux; then
+	if use driver; then
 		linux-mod_pkg_preinst
 
-		local videogroup="$(egetent group video | cut -d ':' -f 3)"
+		local videogroup="$(getent group video | cut -d ':' -f 3)"
 		if [ -z "${videogroup}" ]; then
 			eerror "Failed to determine the video group gid"
 			die "Failed to determine the video group gid"
@@ -545,11 +490,12 @@ pkg_preinst() {
 }
 
 pkg_postinst() {
-	use driver && use kernel_linux && linux-mod_pkg_postinst
+	use driver && linux-mod_pkg_postinst
 
 	# Switch to the nvidia implementation
-	use X && "${ROOT}"/usr/bin/eselect opengl set --use-old nvidia
-	"${ROOT}"/usr/bin/eselect opencl set --use-old nvidia
+	if ! use libglvnd; then
+		use X && "${ROOT}"/usr/bin/eselect opengl set --use-old nvidia
+	fi
 
 	readme.gentoo_print_elog
 
@@ -572,10 +518,14 @@ pkg_postinst() {
 }
 
 pkg_prerm() {
-	use X && "${ROOT}"/usr/bin/eselect opengl set --use-old xorg-x11
+	if ! use libglvnd; then
+		use X && "${ROOT}"/usr/bin/eselect opengl set --use-old xorg-x11
+	fi
 }
 
 pkg_postrm() {
-	use driver && use kernel_linux && linux-mod_pkg_postrm
-	use X && "${ROOT}"/usr/bin/eselect opengl set --use-old xorg-x11
+	use driver && linux-mod_pkg_postrm
+	if ! use libglvnd; then
+		use X && "${ROOT}"/usr/bin/eselect opengl set --use-old xorg-x11
+	fi
 }

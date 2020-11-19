@@ -1,41 +1,36 @@
-# Copyright 1999-2019 Gentoo Authors
+# Copyright 1999-2020 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
 
-EAPI=6
-inherit eutils flag-o-matic linux-info linux-mod multilib-minimal nvidia-driver \
-	portability toolchain-funcs unpacker user udev
+EAPI=7
+inherit desktop flag-o-matic linux-info linux-mod multilib-minimal \
+	nvidia-driver portability systemd toolchain-funcs unpacker udev
 
-DESCRIPTION="NVIDIA Accelerated Graphics Driver"
-HOMEPAGE="http://www.nvidia.com/ https://developer.nvidia.com/vulkan-driver"
-
-NV_PV="${PV}.${PR/r1/}"
-NVSET_PV="435.21"
+NV_PV="${PV}.${PR/r?/}"
+NVSET_PV="450.57"
 
 AMD64_NV_PACKAGE="NVIDIA-Linux-x86_64-${NV_PV}"
 
 NV_URI="https://developer.nvidia.com"
 SRC_URI="
-	amd64? ( ${NV_URI}/vulkan-beta-${NV_PV//./}-linux -> ${AMD64_NV_PACKAGE}.run )
+	${NV_URI}/vulkan-beta-${NV_PV//./}-linux -> ${AMD64_NV_PACKAGE}.run
 	tools? (
 		https://download.nvidia.com/XFree86/nvidia-settings/nvidia-settings-${NVSET_PV}.tar.bz2
 	)
 "
 
+EMULTILIB_PKG="true"
+KEYWORDS="-* ~amd64"
 LICENSE="GPL-2 NVIDIA-r2"
 SLOT="0/${PV%.*}"
-KEYWORDS="-* ~amd64"
-RESTRICT="bindist mirror"
-EMULTILIB_PKG="true"
 
-IUSE="acpi compat +driver gtk3 +kms libglvnd multilib static-libs +tools uvm wayland +X"
+IUSE="compat +driver gtk3 +kms +libglvnd multilib static-libs +tools uvm wayland +X"
 REQUIRED_USE="
 	tools? ( X )
 	static-libs? ( tools )
 "
-RESTRICT="test"
 
 COMMON="
-	app-eselect/eselect-opencl
+	driver? ( acct-group/video )
 	>=sys-libs/glibc-2.6.1
 	tools? (
 		dev-libs/atk
@@ -70,8 +65,8 @@ DEPEND="
 "
 RDEPEND="
 	${COMMON}
-	acpi? ( sys-power/acpid )
 	tools? ( !media-video/nvidia-settings )
+	uvm? ( >=virtual/opencl-3 )
 	wayland? ( dev-libs/wayland[${MULTILIB_USEDEP}] )
 	X? (
 		<x11-base/xorg-server-1.20.99:=
@@ -80,50 +75,29 @@ RDEPEND="
 		>=x11-libs/libvdpau-1.0[${MULTILIB_USEDEP}]
 		sys-libs/zlib[${MULTILIB_USEDEP}]
 	)
+	net-libs/libtirpc
 "
 QA_PREBUILT="opt/* usr/lib*"
 S=${WORKDIR}/
-
-nvidia_drivers_versions_check() {
-	if use amd64 && has_multilib_profile && \
-		[ "${DEFAULT_ABI}" != "amd64" ]; then
-		eerror "This ebuild doesn't currently support changing your default ABI"
-		die "Unexpected \${DEFAULT_ABI} = ${DEFAULT_ABI}"
-	fi
-
-	if kernel_is ge 5 4; then
-		ewarn "Gentoo supports kernels which are supported by NVIDIA"
-		ewarn "which are limited to the following kernels:"
-		ewarn "<sys-kernel/gentoo-sources-5.4"
-		ewarn "<sys-kernel/vanilla-sources-5.4"
-		ewarn ""
-		ewarn "You are free to utilize epatch_user to provide whatever"
-		ewarn "support you feel is appropriate, but will not receive"
-		ewarn "support as a result of those changes."
-		ewarn ""
-		ewarn "Do not file a bug report about this."
-		ewarn ""
-	fi
-
-	# Since Nvidia ships many different series of drivers, we need to give the user
-	# some kind of guidance as to what version they should install. This tries
-	# to point the user in the right direction but can't be perfect. check
-	# nvidia-driver.eclass
-	nvidia-driver-check-warning
-
-	# Kernel features/options to check for
-	CONFIG_CHECK="!DEBUG_MUTEXES !I2C_NVIDIA_GPU ~!LOCKDEP ~MTRR ~SYSVIPC ~ZONE_DMA"
-
-	# Now do the above checks
-	check_extra_config
-}
+PATCHES=(
+	"${FILESDIR}"/${PN}-440.26-locale.patch
+)
+NV_KV_MAX_PLUS="5.9"
+CONFIG_CHECK="
+	!DEBUG_MUTEXES
+	~!I2C_NVIDIA_GPU
+	~!LOCKDEP
+	~DRM
+	~DRM_KMS_HELPER
+	~SYSVIPC
+"
 
 pkg_pretend() {
-	nvidia_drivers_versions_check
+	nvidia-driver_check
 }
 
 pkg_setup() {
-	nvidia_drivers_versions_check
+	nvidia-driver_check
 
 	# try to turn off distcc and ccache for people that have a problem with it
 	export DISTCC_DISABLE=1
@@ -153,6 +127,7 @@ pkg_setup() {
 		eerror "You must build this against 2.6.9 or higher kernels."
 	fi
 
+	# set variables to where files are in the package structure
 	NV_DOC="${S}"
 	NV_OBJ="${S}"
 	NV_SRC="${S}/kernel"
@@ -162,7 +137,7 @@ pkg_setup() {
 }
 
 src_configure() {
-	tc-export AR CC LD
+	tc-export AR CC LD OBJCOPY
 
 	default
 }
@@ -177,7 +152,8 @@ src_prepare() {
 		cp "${FILESDIR}"/nvidia-settings-linker.patch "${WORKDIR}" || die
 		sed -i \
 			-e "s:@PV@:${NVSET_PV}:g" \
-			"${WORKDIR}"/nvidia-settings-linker.patch || die
+			"${WORKDIR}"/nvidia-settings-linker.patch \
+			|| die
 		eapply "${WORKDIR}"/nvidia-settings-linker.patch
 	fi
 
@@ -249,12 +225,10 @@ donvidia() {
 	# If the library has a SONAME and SONAME does not match the library name,
 	# then we need to create a symlink
 	if [[ ${nv_SOVER} ]] && ! [[ "${nv_SOVER}" = "${nv_LIBNAME}" ]]; then
-		dosym ${nv_LIBNAME} ${nv_DEST}/${nv_SOVER} \
-			|| die "failed to create ${nv_DEST}/${nv_SOVER} symlink"
+		dosym ${nv_LIBNAME} ${nv_DEST}/${nv_SOVER}
 	fi
 
-	dosym ${nv_LIBNAME} ${nv_DEST}/${nv_LIBNAME/.so*/.so} \
-		|| die "failed to create ${nv_LIBNAME/.so*/.so} symlink"
+	dosym ${nv_LIBNAME} ${nv_DEST}/${nv_LIBNAME/.so*/.so}
 }
 
 src_install() {
@@ -265,7 +239,8 @@ src_install() {
 		# This file is tweaked with the appropriate video group in
 		# pkg_preinst, see bug #491414
 		insinto /etc/modprobe.d
-		newins "${FILESDIR}"/nvidia-169.07 nvidia.conf
+		newins "${FILESDIR}"/nvidia-430.conf nvidia.conf
+
 		if use uvm; then
 			doins "${FILESDIR}"/nvidia-rmmod.conf
 			udev_newrules "${FILESDIR}"/nvidia-uvm.udev-rule 99-nvidia-uvm.rules
@@ -315,6 +290,12 @@ src_install() {
 		doins ${NV_X11}/10_nvidia_wayland.json
 	fi
 
+	insinto /etc/vulkan/icd.d
+	doins nvidia_icd.json
+
+	insinto /etc/vulkan/implicit_layer.d
+	doins nvidia_layers.json
+
 	# OpenCL ICD for NVIDIA
 	insinto /etc/OpenCL/vendors
 	doins ${NV_OBJ}/nvidia.icd
@@ -324,9 +305,6 @@ src_install() {
 
 	if use X; then
 		doexe ${NV_OBJ}/nvidia-xconfig
-
-		insinto /etc/vulkan/icd.d
-		doins nvidia_icd.json
 	fi
 
 	doexe ${NV_OBJ}/nvidia-cuda-mps-control
@@ -375,6 +353,8 @@ src_install() {
 		newins \
 			nvidia-application-profiles-${NV_PV}-rc nvidia-application-profiles-rc
 
+		doicon ${NV_OBJ}/nvidia-settings.png
+
 		domenu "${FILESDIR}"/nvidia-settings.desktop
 
 		exeinto /etc/X11/xinit/xinitrc.d
@@ -382,6 +362,11 @@ src_install() {
 	fi
 
 	dobin ${NV_OBJ}/nvidia-bug-report.sh
+
+	systemd_dounit *.service
+	dobin nvidia-sleep.sh
+	exeinto /lib/systemd/system-sleep
+	doexe nvidia
 
 	if has_multilib_profile && use multilib; then
 		local OABI=${ABI}
@@ -405,6 +390,8 @@ src_install() {
 	doman "${NV_MAN}"/nvidia-cuda-mps-control.1
 
 	readme.gentoo_create_doc
+
+	dodoc supported-gpus.json
 
 	docinto html
 	dodoc -r ${NV_DOC}/html/*
@@ -436,7 +423,6 @@ src_install-libs() {
 			"libnvidia-compiler.so.${NV_SOVER}"
 			"libnvidia-eglcore.so.${NV_SOVER}"
 			"libnvidia-encode.so.${NV_SOVER}"
-			"libnvidia-fatbinaryloader.so.${NV_SOVER}"
 			"libnvidia-fbc.so.${NV_SOVER}"
 			"libnvidia-glcore.so.${NV_SOVER}"
 			"libnvidia-glsi.so.${NV_SOVER}"
@@ -461,7 +447,7 @@ src_install-libs() {
 		if use wayland && has_multilib_profile && [[ ${ABI} == "amd64" ]];
 		then
 			NV_GLX_LIBRARIES+=(
-				"libnvidia-egl-wayland.so.1.1.3"
+				"libnvidia-egl-wayland.so.1.1.4"
 			)
 		fi
 
@@ -474,6 +460,7 @@ src_install-libs() {
 		then
 			NV_GLX_LIBRARIES+=(
 				"libnvidia-cbl.so.${NV_SOVER}"
+				"libnvidia-ngx.so.${NV_SOVER}"
 				"libnvidia-rtcore.so.${NV_SOVER}"
 				"libnvoptix.so.${NV_SOVER}"
 			)
@@ -489,7 +476,7 @@ pkg_preinst() {
 	if use driver; then
 		linux-mod_pkg_preinst
 
-		local videogroup="$(egetent group video | cut -d ':' -f 3)"
+		local videogroup="$(getent group video | cut -d ':' -f 3)"
 		if [ -z "${videogroup}" ]; then
 			eerror "Failed to determine the video group gid"
 			die "Failed to determine the video group gid"
@@ -519,7 +506,6 @@ pkg_postinst() {
 	if ! use libglvnd; then
 		use X && "${ROOT}"/usr/bin/eselect opengl set --use-old nvidia
 	fi
-	"${ROOT}"/usr/bin/eselect opencl set --use-old nvidia
 
 	readme.gentoo_print_elog
 
@@ -539,6 +525,15 @@ pkg_postinst() {
 		elog "media-video/nvidia-settings"
 		elog
 	fi
+
+	elog "To enable nvidia sleep services under systemd, run these commands:"
+	elog "	systemctl enable nvidia-suspend.service"
+	elog "	systemctl enable nvidia-hibernate.service"
+	elog "	systemctl enable nvidia-resume.service"
+	elog "Set the NVreg_TemporaryFilePath kernel module parameter to a"
+	elog "suitable path in case the default of /tmp does not work for you"
+	elog "For more information see:"
+	elog "${ROOT}/usr/share/doc/${PF}/html/powermanagement.html"
 }
 
 pkg_prerm() {
