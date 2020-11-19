@@ -3,15 +3,19 @@
 
 EAPI=7
 inherit desktop flag-o-matic linux-info linux-mod multilib-minimal \
-	nvidia-driver portability systemd toolchain-funcs unpacker udev
+	nvidia-driver portability toolchain-funcs unpacker udev
 
-NVSET_PV="455.28"
+DESCRIPTION="NVIDIA Accelerated Graphics Driver"
+HOMEPAGE="https://www.nvidia.com/ https://developer.nvidia.com/vulkan-driver"
 
-AMD64_NV_PACKAGE="NVIDIA-Linux-x86_64-${PV}"
+NV_PV="${PV}.${PR/r?/}"
+NVSET_PV="440.64"
 
-NV_URI="https://developer.nvidia.com/"
+AMD64_NV_PACKAGE="NVIDIA-Linux-x86_64-${NV_PV}"
+
+NV_URI="https://developer.nvidia.com"
 SRC_URI="
-	${NV_URI}/vulkan-beta-${PV//./}-linux -> ${AMD64_NV_PACKAGE}.run
+	${NV_URI}/vulkan-beta-${NV_PV//./}-linux -> ${AMD64_NV_PACKAGE}.run
 	tools? (
 		https://download.nvidia.com/XFree86/nvidia-settings/nvidia-settings-${NVSET_PV}.tar.bz2
 	)
@@ -20,7 +24,7 @@ SRC_URI="
 EMULTILIB_PKG="true"
 KEYWORDS="-* ~amd64"
 LICENSE="GPL-2 NVIDIA-r2"
-SLOT="0/${PV%%.*}"
+SLOT="0/${PV%.*}"
 
 IUSE="compat +driver gtk3 +kms +libglvnd multilib static-libs +tools uvm wayland +X"
 REQUIRED_USE="
@@ -39,7 +43,7 @@ COMMON="
 			x11-libs/gtk+:3
 		)
 		x11-libs/cairo
-		x11-libs/gdk-pixbuf[X]
+		x11-libs/gdk-pixbuf
 		x11-libs/gtk+:2
 		x11-libs/libX11
 		x11-libs/libXext
@@ -49,11 +53,12 @@ COMMON="
 		x11-libs/pango[X]
 	)
 	X? (
-		>=x11-libs/libvdpau-1.0[${MULTILIB_USEDEP}]
-		app-misc/pax-utils
+		!libglvnd? ( >=app-eselect/eselect-opengl-1.0.9 )
 		libglvnd? (
-			media-libs/libglvnd[X,${MULTILIB_USEDEP}]
+			media-libs/libglvnd[${MULTILIB_USEDEP}]
+			!app-eselect/eselect-opengl
 		)
+		app-misc/pax-utils
 	)
 "
 DEPEND="
@@ -63,30 +68,24 @@ DEPEND="
 "
 RDEPEND="
 	${COMMON}
+	tools? ( !media-video/nvidia-settings )
 	uvm? ( >=virtual/opencl-3 )
 	wayland? ( dev-libs/wayland[${MULTILIB_USEDEP}] )
 	X? (
 		<x11-base/xorg-server-1.20.99:=
 		>=x11-libs/libX11-1.6.2[${MULTILIB_USEDEP}]
 		>=x11-libs/libXext-1.3.2[${MULTILIB_USEDEP}]
+		>=x11-libs/libvdpau-1.0[${MULTILIB_USEDEP}]
 		sys-libs/zlib[${MULTILIB_USEDEP}]
 	)
-	net-libs/libtirpc
 "
 QA_PREBUILT="opt/* usr/lib*"
 S=${WORKDIR}/
 PATCHES=(
 	"${FILESDIR}"/${PN}-440.26-locale.patch
 )
-NV_KV_MAX_PLUS="5.9"
-CONFIG_CHECK="
-	!DEBUG_MUTEXES
-	~!I2C_NVIDIA_GPU
-	~!LOCKDEP
-	~DRM
-	~DRM_KMS_HELPER
-	~SYSVIPC
-"
+NV_KV_MAX_PLUS="5.7"
+CONFIG_CHECK="!DEBUG_MUTEXES ~!I2C_NVIDIA_GPU ~!LOCKDEP ~MTRR ~SYSVIPC ~ZONE_DMA"
 
 pkg_pretend() {
 	nvidia-driver_check
@@ -117,10 +116,10 @@ pkg_setup() {
 		# expects x86_64 or i386 and then converts it to x86
 		# later on in the build process
 		BUILD_FIXES="ARCH=$(uname -m | sed -e 's/i.86/i386/')"
+	fi
 
-		if kernel_is lt 2 6 9; then
-			eerror "You must build this against 2.6.9 or higher kernels."
-		fi
+	if kernel_is lt 2 6 9; then
+		eerror "You must build this against 2.6.9 or higher kernels."
 	fi
 
 	# set variables to where files are in the package structure
@@ -129,11 +128,11 @@ pkg_setup() {
 	NV_SRC="${S}/kernel"
 	NV_MAN="${S}"
 	NV_X11="${S}"
-	NV_SOVER=${PV}
+	NV_SOVER="${NV_PV}"
 }
 
 src_configure() {
-	tc-export AR CC LD OBJCOPY
+	tc-export AR CC LD
 
 	default
 }
@@ -145,11 +144,14 @@ src_prepare() {
 	done
 
 	if use tools; then
+		cp "${FILESDIR}"/nvidia-settings-fno-common.patch "${WORKDIR}" || die
 		cp "${FILESDIR}"/nvidia-settings-linker.patch "${WORKDIR}" || die
 		sed -i \
 			-e "s:@PV@:${NVSET_PV}:g" \
+			"${WORKDIR}"/nvidia-settings-fno-common.patch \
 			"${WORKDIR}"/nvidia-settings-linker.patch \
 			|| die
+		eapply "${WORKDIR}"/nvidia-settings-fno-common.patch
 		eapply "${WORKDIR}"/nvidia-settings-linker.patch
 	fi
 
@@ -235,8 +237,7 @@ src_install() {
 		# This file is tweaked with the appropriate video group in
 		# pkg_preinst, see bug #491414
 		insinto /etc/modprobe.d
-		newins "${FILESDIR}"/nvidia-430.conf nvidia.conf
-
+		newins "${FILESDIR}"/nvidia-169.07 nvidia.conf
 		if use uvm; then
 			doins "${FILESDIR}"/nvidia-rmmod.conf
 			udev_newrules "${FILESDIR}"/nvidia-uvm.udev-rule 99-nvidia-uvm.rules
@@ -286,12 +287,6 @@ src_install() {
 		doins ${NV_X11}/10_nvidia_wayland.json
 	fi
 
-	insinto /etc/vulkan/icd.d
-	doins nvidia_icd.json
-
-	insinto /etc/vulkan/implicit_layer.d
-	doins nvidia_layers.json
-
 	# OpenCL ICD for NVIDIA
 	insinto /etc/OpenCL/vendors
 	doins ${NV_OBJ}/nvidia.icd
@@ -301,6 +296,12 @@ src_install() {
 
 	if use X; then
 		doexe ${NV_OBJ}/nvidia-xconfig
+
+		insinto /etc/vulkan/icd.d
+		doins nvidia_icd.json
+
+		insinto /etc/vulkan/implicit_layer.d
+		doins nvidia_layers.json
 	fi
 
 	doexe ${NV_OBJ}/nvidia-cuda-mps-control
@@ -342,11 +343,12 @@ src_install() {
 		fi
 
 		insinto /usr/share/nvidia/
-		doins nvidia-application-profiles-${PV}-key-documentation
+		newins \
+			nvidia-application-profiles-${NV_PV}-key-documentation nvidia-application-profiles-${NVSET_PV}-key-documentation
 
 		insinto /etc/nvidia
 		newins \
-			nvidia-application-profiles-${PV}-rc nvidia-application-profiles-rc
+			nvidia-application-profiles-${NV_PV}-rc nvidia-application-profiles-rc
 
 		doicon ${NV_OBJ}/nvidia-settings.png
 
@@ -358,14 +360,9 @@ src_install() {
 
 	dobin ${NV_OBJ}/nvidia-bug-report.sh
 
-	systemd_dounit *.service
-	dobin nvidia-sleep.sh
-	exeinto /lib/systemd/system-sleep
-	doexe nvidia
-
 	if has_multilib_profile && use multilib; then
 		local OABI=${ABI}
-		for ABI in $(multilib_get_enabled_abis); do
+		for ABI in $(get_install_abis); do
 			src_install-libs
 		done
 		ABI=${OABI}
@@ -385,8 +382,6 @@ src_install() {
 	doman "${NV_MAN}"/nvidia-cuda-mps-control.1
 
 	readme.gentoo_create_doc
-
-	dodoc supported-gpus.json
 
 	docinto html
 	dodoc -r ${NV_DOC}/html/*
@@ -418,6 +413,7 @@ src_install-libs() {
 			"libnvidia-compiler.so.${NV_SOVER}"
 			"libnvidia-eglcore.so.${NV_SOVER}"
 			"libnvidia-encode.so.${NV_SOVER}"
+			"libnvidia-fatbinaryloader.so.${NV_SOVER}"
 			"libnvidia-fbc.so.${NV_SOVER}"
 			"libnvidia-glcore.so.${NV_SOVER}"
 			"libnvidia-glsi.so.${NV_SOVER}"
@@ -439,10 +435,10 @@ src_install-libs() {
 			)
 		fi
 
-		if use wayland && [[ ${ABI} == "amd64" ]];
+		if use wayland && has_multilib_profile && [[ ${ABI} == "amd64" ]];
 		then
 			NV_GLX_LIBRARIES+=(
-				"libnvidia-egl-wayland.so.1.1.5"
+				"libnvidia-egl-wayland.so.1.1.4"
 			)
 		fi
 
@@ -451,11 +447,10 @@ src_install-libs() {
 			"libnvidia-tls.so.${NV_SOVER}"
 		)
 
-		if [[ ${ABI} == "amd64" ]];
+		if has_multilib_profile && [[ ${ABI} == "amd64" ]];
 		then
 			NV_GLX_LIBRARIES+=(
 				"libnvidia-cbl.so.${NV_SOVER}"
-				"libnvidia-ngx.so.${NV_SOVER}"
 				"libnvidia-rtcore.so.${NV_SOVER}"
 				"libnvoptix.so.${NV_SOVER}"
 			)
@@ -497,6 +492,11 @@ pkg_preinst() {
 pkg_postinst() {
 	use driver && linux-mod_pkg_postinst
 
+	# Switch to the nvidia implementation
+	if ! use libglvnd; then
+		use X && "${ROOT}"/usr/bin/eselect opengl set --use-old nvidia
+	fi
+
 	readme.gentoo_print_elog
 
 	if ! use X; then
@@ -515,17 +515,17 @@ pkg_postinst() {
 		elog "media-video/nvidia-settings"
 		elog
 	fi
+}
 
-	elog "To enable nvidia sleep services under systemd, run these commands:"
-	elog "	systemctl enable nvidia-suspend.service"
-	elog "	systemctl enable nvidia-hibernate.service"
-	elog "	systemctl enable nvidia-resume.service"
-	elog "Set the NVreg_TemporaryFilePath kernel module parameter to a"
-	elog "suitable path in case the default of /tmp does not work for you"
-	elog "For more information see:"
-	elog "${ROOT}/usr/share/doc/${PF}/html/powermanagement.html"
+pkg_prerm() {
+	if ! use libglvnd; then
+		use X && "${ROOT}"/usr/bin/eselect opengl set --use-old xorg-x11
+	fi
 }
 
 pkg_postrm() {
 	use driver && linux-mod_pkg_postrm
+	if ! use libglvnd; then
+		use X && "${ROOT}"/usr/bin/eselect opengl set --use-old xorg-x11
+	fi
 }

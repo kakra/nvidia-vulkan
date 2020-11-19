@@ -5,14 +5,13 @@ EAPI=7
 inherit desktop flag-o-matic linux-info linux-mod multilib-minimal \
 	nvidia-driver portability systemd toolchain-funcs unpacker udev
 
-NV_PV="${PV}.${PR/r?/}"
-NVSET_PV="450.57"
+NVSET_PV="455.28"
 
-AMD64_NV_PACKAGE="NVIDIA-Linux-x86_64-${NV_PV}"
+AMD64_NV_PACKAGE="NVIDIA-Linux-x86_64-${PV}"
 
-NV_URI="https://developer.nvidia.com"
+NV_URI="https://developer.nvidia.com/"
 SRC_URI="
-	${NV_URI}/vulkan-beta-${NV_PV//./}-linux -> ${AMD64_NV_PACKAGE}.run
+	${NV_URI}/vulkan-beta-${PV//./}-linux -> ${AMD64_NV_PACKAGE}.run
 	tools? (
 		https://download.nvidia.com/XFree86/nvidia-settings/nvidia-settings-${NVSET_PV}.tar.bz2
 	)
@@ -21,7 +20,7 @@ SRC_URI="
 EMULTILIB_PKG="true"
 KEYWORDS="-* ~amd64"
 LICENSE="GPL-2 NVIDIA-r2"
-SLOT="0/${PV%.*}"
+SLOT="0/${PV%%.*}"
 
 IUSE="compat +driver gtk3 +kms +libglvnd multilib static-libs +tools uvm wayland +X"
 REQUIRED_USE="
@@ -40,7 +39,7 @@ COMMON="
 			x11-libs/gtk+:3
 		)
 		x11-libs/cairo
-		x11-libs/gdk-pixbuf[X]
+		x11-libs/gdk-pixbuf
 		x11-libs/gtk+:2
 		x11-libs/libX11
 		x11-libs/libXext
@@ -50,12 +49,11 @@ COMMON="
 		x11-libs/pango[X]
 	)
 	X? (
-		!libglvnd? ( >=app-eselect/eselect-opengl-1.0.9 )
-		libglvnd? (
-			media-libs/libglvnd[${MULTILIB_USEDEP}]
-			!app-eselect/eselect-opengl
-		)
+		>=x11-libs/libvdpau-1.0[${MULTILIB_USEDEP}]
 		app-misc/pax-utils
+		libglvnd? (
+			media-libs/libglvnd[X,${MULTILIB_USEDEP}]
+		)
 	)
 "
 DEPEND="
@@ -65,14 +63,12 @@ DEPEND="
 "
 RDEPEND="
 	${COMMON}
-	tools? ( !media-video/nvidia-settings )
 	uvm? ( >=virtual/opencl-3 )
 	wayland? ( dev-libs/wayland[${MULTILIB_USEDEP}] )
 	X? (
 		<x11-base/xorg-server-1.20.99:=
 		>=x11-libs/libX11-1.6.2[${MULTILIB_USEDEP}]
 		>=x11-libs/libXext-1.3.2[${MULTILIB_USEDEP}]
-		>=x11-libs/libvdpau-1.0[${MULTILIB_USEDEP}]
 		sys-libs/zlib[${MULTILIB_USEDEP}]
 	)
 	net-libs/libtirpc
@@ -121,10 +117,10 @@ pkg_setup() {
 		# expects x86_64 or i386 and then converts it to x86
 		# later on in the build process
 		BUILD_FIXES="ARCH=$(uname -m | sed -e 's/i.86/i386/')"
-	fi
 
-	if kernel_is lt 2 6 9; then
-		eerror "You must build this against 2.6.9 or higher kernels."
+		if kernel_is lt 2 6 9; then
+			eerror "You must build this against 2.6.9 or higher kernels."
+		fi
 	fi
 
 	# set variables to where files are in the package structure
@@ -133,7 +129,7 @@ pkg_setup() {
 	NV_SRC="${S}/kernel"
 	NV_MAN="${S}"
 	NV_X11="${S}"
-	NV_SOVER="${NV_PV}"
+	NV_SOVER=${PV}
 }
 
 src_configure() {
@@ -346,12 +342,11 @@ src_install() {
 		fi
 
 		insinto /usr/share/nvidia/
-		newins \
-			nvidia-application-profiles-${NV_PV}-key-documentation nvidia-application-profiles-${NVSET_PV}-key-documentation
+		doins nvidia-application-profiles-${PV}-key-documentation
 
 		insinto /etc/nvidia
 		newins \
-			nvidia-application-profiles-${NV_PV}-rc nvidia-application-profiles-rc
+			nvidia-application-profiles-${PV}-rc nvidia-application-profiles-rc
 
 		doicon ${NV_OBJ}/nvidia-settings.png
 
@@ -370,7 +365,7 @@ src_install() {
 
 	if has_multilib_profile && use multilib; then
 		local OABI=${ABI}
-		for ABI in $(get_install_abis); do
+		for ABI in $(multilib_get_enabled_abis); do
 			src_install-libs
 		done
 		ABI=${OABI}
@@ -444,10 +439,10 @@ src_install-libs() {
 			)
 		fi
 
-		if use wayland && has_multilib_profile && [[ ${ABI} == "amd64" ]];
+		if use wayland && [[ ${ABI} == "amd64" ]];
 		then
 			NV_GLX_LIBRARIES+=(
-				"libnvidia-egl-wayland.so.1.1.4"
+				"libnvidia-egl-wayland.so.1.1.5"
 			)
 		fi
 
@@ -456,7 +451,7 @@ src_install-libs() {
 			"libnvidia-tls.so.${NV_SOVER}"
 		)
 
-		if has_multilib_profile && [[ ${ABI} == "amd64" ]];
+		if [[ ${ABI} == "amd64" ]];
 		then
 			NV_GLX_LIBRARIES+=(
 				"libnvidia-cbl.so.${NV_SOVER}"
@@ -502,11 +497,6 @@ pkg_preinst() {
 pkg_postinst() {
 	use driver && linux-mod_pkg_postinst
 
-	# Switch to the nvidia implementation
-	if ! use libglvnd; then
-		use X && "${ROOT}"/usr/bin/eselect opengl set --use-old nvidia
-	fi
-
 	readme.gentoo_print_elog
 
 	if ! use X; then
@@ -536,15 +526,6 @@ pkg_postinst() {
 	elog "${ROOT}/usr/share/doc/${PF}/html/powermanagement.html"
 }
 
-pkg_prerm() {
-	if ! use libglvnd; then
-		use X && "${ROOT}"/usr/bin/eselect opengl set --use-old xorg-x11
-	fi
-}
-
 pkg_postrm() {
 	use driver && linux-mod_pkg_postrm
-	if ! use libglvnd; then
-		use X && "${ROOT}"/usr/bin/eselect opengl set --use-old xorg-x11
-	fi
 }
