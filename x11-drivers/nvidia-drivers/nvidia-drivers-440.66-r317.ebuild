@@ -1,9 +1,9 @@
-# Copyright 1999-2020 Gentoo Authors
+# Copyright 1999-2021 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
 
 EAPI=7
 inherit desktop flag-o-matic linux-info linux-mod multilib-minimal \
-	nvidia-driver portability toolchain-funcs unpacker udev
+	 portability toolchain-funcs unpacker udev
 
 DESCRIPTION="NVIDIA Accelerated Graphics Driver"
 HOMEPAGE="https://www.nvidia.com/ https://developer.nvidia.com/vulkan-driver"

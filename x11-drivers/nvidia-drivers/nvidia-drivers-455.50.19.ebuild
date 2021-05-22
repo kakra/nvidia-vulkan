@@ -3,7 +3,10 @@
 
 EAPI=7
 inherit desktop flag-o-matic linux-info linux-mod multilib-minimal \
-	nvidia-driver portability systemd toolchain-funcs unpacker udev
+	 portability systemd toolchain-funcs unpacker udev
+
+DESCRIPTION="NVIDIA Accelerated Graphics Driver"
+HOMEPAGE="https://www.nvidia.com/ https://developer.nvidia.com/vulkan-driver"
 
 NVSET_PV="465.27"
 
